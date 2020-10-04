@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+
+
+# Based on  https://superuser.com/questions/315523/ssh-connection-between-two-behind-nat-computers-through-third-public-ip-computer
+
+# need systemd service: https://unix.stackexchange.com/questions/166473/debian-how-to-run-a-script-on-startup-as-soon-as-there-is-an-internet-connecti
+
+set -o errexit
+set -o nounset
+set -o pipefail
+export SHELLOPTS
+
+trap exit INT
+
+function ERR_trap ()
+{
+    echo "Error exit at line: ${1}, status value: ${2}!"
+    exit ${2}
+}
+set -o errtrace
+trap 'ERR_trap ${LINENO} ${?}' ERR
+
+
+# temp_file=$(mktemp)
+# function EXIT_trap ()
+# {
+#     echo EXIT_trap
+#     rm -f ${temp_file}
+# }
+# trap 'EXIT_trap' EXIT
+
+
+_3dpssh_dir=.3dps
+
+
+# Check to see if we have done a setup:
+if [[ ! -d ${HOME}/${_3dpssh_dir} ]] ; then
+    echo -n "It appears that 3dpssh is not configured.  Would you like to configure it now? "
+    read answer
+    if [[ "${answer}" != 'y' ]] ; then
+	echo "Not configuring..."
+	exit
+    fi
+
+    echo -n "3d party host: "
+    read _3dpssh_host
+    echo -n "local name: "
+    read _3dpssh_local_name
+
+    mkdir -p ${HOME}/${_3dpssh_dir}
+    cat <<-EOF > ${HOME}/${_3dpssh_dir}/.config
+	_3dpssh_host="${_3dpssh_host}"
+	_3dpssh_local_name="${_3dpssh_local_name}"
+EOF
+fi
+
+source ${HOME}/${_3dpssh_dir}/.config
+
+
+# Should test for ping
+
+
+REMOTE_HOME="$(ssh ${_3dpssh_host} echo \${HOME})"
+
+
+function check_foreign_setup ()
+{
+    # Create working directory (_3dpssh_dir) if necessary
+    if ! ssh ${_3dpssh_host} [[ -d ${REMOTE_HOME}/${_3dpssh_dir} ]] ; then
+	echo "Creating: ssh ${_3dpssh_host} mkdir -p \${REMOTE_HOME}/${_3dpssh_dir}"
+	ssh ${_3dpssh_host} mkdir -p ${REMOTE_HOME}/${_3dpssh_dir}
+    fi
+
+    # Check to see what connections are dead
+    # Live connections appear in /proc/net/unix
+    ssh ${_3dpssh_host} \
+	for i in ${REMOTE_HOME}/${_3dpssh_dir}/\* \; do \
+	    if ! grep -q \${i} /proc/net/unix \; then \
+	        rm -f \${i} \; \
+	    fi \
+	done
+}
+
+
+function check_remote_connection ()
+{
+    local found
+    
+    found=false
+    for i in $(ssh ${_3dpssh_host} echo ${REMOTE_HOME}/${_3dpssh_dir}/\*) ; do
+	if [[ "$(basename "${i}")" == "${_3dpssh_local_name}" ]] ; then
+	    found=true
+	fi
+    done
+    
+    if ! ${found} ; then
+	echo "Backend connection not found, starting it..."
+	pkill -f "ssh -fAXN -R " || :
+	ssh -fAXN -R ${REMOTE_HOME}/${_3dpssh_dir}/${_3dpssh_local_name}:127.0.0.1:22 ${_3dpssh_host}
+    fi
+}
+
+
+function list_available_connections ()
+{
+    local i
+    
+    echo -e "Available Connections:"
+    for i in $(ssh ${_3dpssh_host} echo ${REMOTE_HOME}/${_3dpssh_dir}/*) ; do
+	echo -e "\t$(basename ${i})"
+    done
+}
+
+
+function do_ssh ()
+{
+    echo "Connecting to \"${1}\""
+    pkill -f "ssh -fAXN -L " || :
+    ssh -fAXN -L 127.0.0.1:2222:${REMOTE_HOME}/${_3dpssh_dir}/${1} ${_3dpssh_host}
+    ssh \
+	-o GlobalKnownHostsFile=/dev/null \
+	-o UserKnownHostsFile=/dev/null \
+	-o StrictHostKeyChecking=no \
+	-p 2222 \
+	127.0.0.1
+    pkill -f "ssh -fAXN -L " || :
+}
+
+
+function do_connect ()
+{
+    echo "Connection environment to \"${1}\""
+    pkill -f "ssh -fAXN -L " || :
+    ssh -fAXN -L 127.0.0.1:2222:${REMOTE_HOME}/${_3dpssh_dir}/${1} ${_3dpssh_host}
+    echo "Use ssh localhost"
+    echo "Use rsync -av localhost:"
+    echo "...   ^D to exit"
+    export -n SHELLOPTS
+    bash --rcfile <(echo \
+			". ~/.bashrc ;" \
+			"alias rsync=\"rsync -e 'ssh -p 2222'\" ;" \
+			"alias ssh=\"ssh" \
+			    "-o GlobalKnownHostsFile=/dev/null" \
+			    "-o UserKnownHostsFile=/dev/null" \
+			    "-o StrictHostKeyChecking=no" \
+			    "-p 2222\"" \
+			) || :
+    export SHELLOPTS
+    echo "Dropping connection to \"${1}\""
+    pkill -f "ssh -fAXN -L " || :
+}
+
+
+check_foreign_setup
+check_remote_connection
+
+
+if [[ ${#} -eq 0 ]] ; then
+    list_available_connections
+elif [[ ${#} -eq 1 ]] ; then
+    do_ssh "${1}"
+elif [[ ${#} -eq 2 ]] ; then
+    if [[ (${1} == "-c") || (${1} == "--connect") ]] ; then
+	do_connect ${2}
+    elif [[ ${1} == "sshfs" ]] ; then
+	echo "sshfs ${2}"
+	# do_rsync ${2}
+	echo "not done yet"
+    else
+	echo not rsync
+    fi
+else
+    echo badness
+fi

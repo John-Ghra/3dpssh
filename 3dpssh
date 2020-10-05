@@ -140,13 +140,27 @@ function connection_setup ()
     local_ssh_pid=${!}
 
     # Wait for the above connection to complete
-    # --> potential infinit loop <--
+    # --> potential infinite loop <--
     i=0
+    echo -n "Connecting "
     while ! nc -z 127.0.0.1 ${local_port} ; do
-	echo -ne "\r${i} "
-	i=$((${i} + 1))
+	case ${i} in
+	    ( 0 ) echo -ne '-\b' 
+	    ;;
+	    ( 1 ) echo -ne '\\\b' 
+	    ;;
+	    ( 2 ) echo -ne '|\b'
+	    ;;
+	    ( 3 ) echo -ne '/\b'
+	    ;;
+	    ( * ) echo 'sum ting wong'
+	    exit 1
+	    ;;
+	esac
+        i=$(( (i+1) % 4 ))
+	sleep 0.1
     done
-    echo ""
+    echo -en "\r"
 
     # Note: the "ssh -AXN -L ..." created in here will be terminated
     # in the EXIT_trap function.
@@ -175,10 +189,6 @@ function do_connection_environment ()
     connection_setup ${1}
 
     echo "For ssh/scp/rsync/sshfs, use \"localhost\" for ${1}."
-    # echo "    ssh localhost"
-    # echo "    scp localhost:"
-    # echo "    rsync localhost:"
-    # echo "    sshfs localhost:"
     echo "You are now in a sub-shell ... ^D to exit"
 
     export -n SHELLOPTS
@@ -200,10 +210,11 @@ function do_connection_environment ()
 }
 
 
-
+echo 1
 check_3d_party_setup
+echo 2
 check_remote_connection
-
+echo 3
 
 
 function usage ()

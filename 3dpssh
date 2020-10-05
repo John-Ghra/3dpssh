@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# This https://stackoverflow.com/questions/14001825/how-to-check-if-a-certain-port-is-open-and-unused
+# says nc -z can test if a port is used
 
 # Based on  https://superuser.com/questions/315523/ssh-connection-between-two-behind-nat-computers-through-third-public-ip-computer
 

@@ -33,14 +33,15 @@ function EXIT_trap ()
 trap 'EXIT_trap' EXIT
 
 
-# Directory for 3dpssh config and tracking files:
+# Directory for 3dpssh config and tracking files.  This is used on
+# both the local and 3d party machines.
 _3dpssh_dir=.3dps
 
 # First port to use for local connection.
-
-# Note that if this port is in use, we search starting here for an
-# unused one one.  Because this port is on 127.0.0.1 only, this is not
-# likely to interfear with anything.
+#
+# Note that if this port is in use, we search for an unused one one.
+# Because this port is on 127.0.0.1 only, this is not likely to
+# interfear with anything.
 local_port=22222
 
 
@@ -78,8 +79,8 @@ function check_foreign_setup ()
 {
     # Create working directory (_3dpssh_dir) if necessary
     if ! ssh ${_3dpssh_host} [[ -d ${REMOTE_HOME}/${_3dpssh_dir} ]] ; then
-	echo "Creating: ssh ${_3dpssh_host} mkdir -p \${REMOTE_HOME}/${_3dpssh_dir}"
-	ssh ${_3dpssh_host} mkdir -p ${REMOTE_HOME}/${_3dpssh_dir}
+    	echo "Creating: ssh ${_3dpssh_host} mkdir -p \${REMOTE_HOME}/${_3dpssh_dir}"
+    	ssh ${_3dpssh_host} mkdir -p ${REMOTE_HOME}/${_3dpssh_dir}
     fi
 
     # Check to see what connections are dead
@@ -95,7 +96,7 @@ function check_foreign_setup ()
 
 function check_remote_connection ()
 {
-    local found
+    local found i
     
     found=false
     for i in $(ssh ${_3dpssh_host} echo ${REMOTE_HOME}/${_3dpssh_dir}/\*) ; do
@@ -123,63 +124,76 @@ function list_available_connections ()
 }
 
 
+function connection_setup ()
+{
+    # "nc -z" can be used to test if a port is busy
+
+    # Search for an available port:
+    while nc -z 127.0.0.1 ${local_port} ; do
+	local_port=$((${local_port} + 1))
+    done
+
+    # --> race condition here on local_port <-- 
+
+    ssh -AXN -L 127.0.0.1:${local_port}:${REMOTE_HOME}/${_3dpssh_dir}/${1} ${_3dpssh_host} &
+    # --> race condition here on local_ssh_pid <--
+    local_ssh_pid=${!}
+
+    # Wait for the above connection to complete
+    # --> potential infinit loop <--
+    while ! nc -z 127.0.0.1 ${local_port} ; do
+	:
+    done
+
+    # Note: the "ssh -AXN -L ..." created in here will be terminated
+    # in the EXIT_trap function.
+    #
+    # Thus a 
+    #     kill ${local_ssh_pid}
+    # is not needed.
+}    
+
 function do_ssh ()
 {
-    echo "Connecting to \"${1}\""
-    pkill -f "ssh -fAXN -L " || :
-    ssh -fAXN -L 127.0.0.1:2222:${REMOTE_HOME}/${_3dpssh_dir}/${1} ${_3dpssh_host}
+    connection_setup ${1}
+    
     ssh \
 	-o GlobalKnownHostsFile=/dev/null \
 	-o UserKnownHostsFile=/dev/null \
 	-o StrictHostKeyChecking=no \
-	-p 2222 \
+	-p ${local_port} \
 	127.0.0.1
-    pkill -f "ssh -fAXN -L " || :
 }
 
 
 
 function do_connect ()
 {
-    echo "Connection environment to \"${1}\""
+    connection_setup ${1}
 
-    # nc -z can be used to test if a port is busy
-    while nc -z 127.0.0.1 ${local_port} ; do
-	local_port=$((${local_port} + 1))
-    done
-
-    # --> race condition here on local_port <-- 
-    
-    ssh -AXN -L 127.0.0.1:${local_port}:${REMOTE_HOME}/${_3dpssh_dir}/${1} ${_3dpssh_host} &
-    local_ssh_pid=${!}
-
-    echo "For ssh/scp/rsync/sshfs, use \"localhost\" for foriegn machine."
-    echo "    ssh localhost"
-    echo "    scp localhost:"
-    echo "    rsync localhost:"
-    echo "    sshfs localhost:"
+    echo "For ssh/scp/rsync/sshfs, use \"localhost\" for ${1}."
+    # echo "    ssh localhost"
+    # echo "    scp localhost:"
+    # echo "    rsync localhost:"
+    # echo "    sshfs localhost:"
     echo "You are now in a sub-shell ... ^D to exit"
 
     export -n SHELLOPTS
     bash --rcfile <(echo \
-			". ~/.bashrc ;" \
-			"alias rsync=\"rsync -e 'ssh -p ${local_port}'\" ;" \
+			". ~/.bashrc;" \
+			"PS1=\"[localhost-->${1}] \${PS1}\";" \
+			"alias rsync=\"rsync -e 'ssh -p ${local_port}'\";" \
 			"alias ssh=\"ssh" \
 			    "-o GlobalKnownHostsFile=/dev/null" \
 			    "-o UserKnownHostsFile=/dev/null" \
 			    "-o StrictHostKeyChecking=no" \
-			    "-p ${local_port}\" ;" \
-			"alias sshfs=\"sshfs -p ${local_port}\" ;" \
+			    "-p ${local_port}\";" \
+			"alias sshfs=\"sshfs -p ${local_port}\";" \
 			"alias scp=\"scp -P ${local_port}\"" \
 			) || :
     export SHELLOPTS
 
-    echo "Dropping connection to \"${1}\""
-
-    # Note: the "ssh -AXN -L ..." created here will be terminated in the EXIT_trap function.
-    # Thus:
-    #     kill ${local_ssh_pid}
-    # is not needed here.
+    echo "Dropped connection to \"${1}\""
 }
 
 

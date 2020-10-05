@@ -23,19 +23,28 @@ set -o errtrace
 trap 'ERR_trap ${LINENO} ${?}' ERR
 
 
-# temp_file=$(mktemp)
-# function EXIT_trap ()
-# {
-#     echo EXIT_trap
-#     rm -f ${temp_file}
-# }
-# trap 'EXIT_trap' EXIT
+local_ssh_pid=''
+function EXIT_trap ()
+{
+    if [[ ! -z "${local_ssh_pid}" ]] ; then
+	kill ${local_ssh_pid}
+    fi
+}
+trap 'EXIT_trap' EXIT
 
 
+# Directory for 3dpssh config and tracking files:
 _3dpssh_dir=.3dps
 
+# First port to use for local connection.
 
-# Check to see if we have done a setup:
+# Note that if this port is in use, we search starting here for an
+# unused one one.  Because this port is on 127.0.0.1 only, this is not
+# likely to interfear with anything.
+local_port=22222
+
+
+# Check to see if we have done a setup on the local machine:
 if [[ ! -d ${HOME}/${_3dpssh_dir} ]] ; then
     echo -n "It appears that 3dpssh is not configured.  Would you like to configure it now? "
     read answer
@@ -129,27 +138,48 @@ function do_ssh ()
 }
 
 
+
 function do_connect ()
 {
     echo "Connection environment to \"${1}\""
-    pkill -f "ssh -fAXN -L " || :
-    ssh -fAXN -L 127.0.0.1:2222:${REMOTE_HOME}/${_3dpssh_dir}/${1} ${_3dpssh_host}
-    echo "Use ssh localhost"
-    echo "Use rsync -av localhost:"
-    echo "...   ^D to exit"
+
+    # nc -z can be used to test if a port is busy
+    while nc -z 127.0.0.1 ${local_port} ; do
+	local_port=$((${local_port} + 1))
+    done
+
+    # --> race condition here on local_port <-- 
+    
+    ssh -AXN -L 127.0.0.1:${local_port}:${REMOTE_HOME}/${_3dpssh_dir}/${1} ${_3dpssh_host} &
+    local_ssh_pid=${!}
+
+    echo "For ssh/scp/rsync/sshfs, use \"localhost\" for foriegn machine."
+    echo "    ssh localhost"
+    echo "    scp localhost:"
+    echo "    rsync localhost:"
+    echo "    sshfs localhost:"
+    echo "You are now in a sub-shell ... ^D to exit"
+
     export -n SHELLOPTS
     bash --rcfile <(echo \
 			". ~/.bashrc ;" \
-			"alias rsync=\"rsync -e 'ssh -p 2222'\" ;" \
+			"alias rsync=\"rsync -e 'ssh -p ${local_port}'\" ;" \
 			"alias ssh=\"ssh" \
 			    "-o GlobalKnownHostsFile=/dev/null" \
 			    "-o UserKnownHostsFile=/dev/null" \
 			    "-o StrictHostKeyChecking=no" \
-			    "-p 2222\"" \
+			    "-p ${local_port}\" ;" \
+			"alias sshfs=\"sshfs -p ${local_port}\" ;" \
+			"alias scp=\"scp -P ${local_port}\"" \
 			) || :
     export SHELLOPTS
+
     echo "Dropping connection to \"${1}\""
-    pkill -f "ssh -fAXN -L " || :
+
+    # Note: the "ssh -AXN -L ..." created here will be terminated in the EXIT_trap function.
+    # Thus:
+    #     kill ${local_ssh_pid}
+    # is not needed here.
 }
 
 
@@ -164,12 +194,8 @@ elif [[ ${#} -eq 1 ]] ; then
 elif [[ ${#} -eq 2 ]] ; then
     if [[ (${1} == "-c") || (${1} == "--connect") ]] ; then
 	do_connect ${2}
-    elif [[ ${1} == "sshfs" ]] ; then
-	echo "sshfs ${2}"
-	# do_rsync ${2}
-	echo "not done yet"
     else
-	echo not rsync
+	echo badness 2
     fi
 else
     echo badness

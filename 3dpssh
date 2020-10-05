@@ -75,7 +75,7 @@ source ${HOME}/${_3dpssh_dir}/.config
 REMOTE_HOME="$(ssh ${_3dpssh_host} echo \${HOME})"
 
 
-function check_foreign_setup ()
+function check_3d_party_setup ()
 {
     # Create working directory (_3dpssh_dir) if necessary
     if ! ssh ${_3dpssh_host} [[ -d ${REMOTE_HOME}/${_3dpssh_dir} ]] ; then
@@ -141,9 +141,12 @@ function connection_setup ()
 
     # Wait for the above connection to complete
     # --> potential infinit loop <--
+    i=0
     while ! nc -z 127.0.0.1 ${local_port} ; do
-	:
+	echo -ne "\r${i} "
+	i=$((${i} + 1))
     done
+    echo ""
 
     # Note: the "ssh -AXN -L ..." created in here will be terminated
     # in the EXIT_trap function.
@@ -152,6 +155,7 @@ function connection_setup ()
     #     kill ${local_ssh_pid}
     # is not needed.
 }    
+
 
 function do_ssh ()
 {
@@ -166,8 +170,7 @@ function do_ssh ()
 }
 
 
-
-function do_connect ()
+function do_connection_environment ()
 {
     connection_setup ${1}
 
@@ -197,20 +200,29 @@ function do_connect ()
 }
 
 
-check_foreign_setup
+
+check_3d_party_setup
 check_remote_connection
+
+
+
+function usage ()
+{
+    echo "Usage: ${0} -- to be explained"
+    exit
+}
 
 
 if [[ ${#} -eq 0 ]] ; then
     list_available_connections
 elif [[ ${#} -eq 1 ]] ; then
-    do_ssh "${1}"
+    do_ssh ${1}
 elif [[ ${#} -eq 2 ]] ; then
     if [[ (${1} == "-c") || (${1} == "--connect") ]] ; then
-	do_connect ${2}
+	do_connection_environment ${2}
     else
-	echo badness 2
+	usage
     fi
 else
-    echo badness
+    usage
 fi

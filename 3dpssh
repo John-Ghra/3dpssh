@@ -178,7 +178,7 @@ function connection_setup ()
 
     # Search for an available port:
     while nc -z 127.0.0.1 ${local_port} ; do
-	local_port=$((${local_port} + 1))
+	local_port=$((local_port + 1))
     done
 
     # --> race condition here on local_port <-- 
@@ -187,7 +187,7 @@ function connection_setup ()
     # --> race condition here on local_ssh_pid <--
     local_ssh_pid=${!}
 
-    # Wait for the above connection to complete
+    # Wait for the above connection to complete.  A "spinner".
     # --> potential infinite loop <--
     i=0
     echo -n "Connecting "
@@ -206,7 +206,7 @@ function connection_setup ()
 	    ;;
 	esac
         i=$(( (i+1) % 4 ))
-	sleep 0.1
+	sleep 0.2
     done
     echo -en "\r"
 
@@ -258,7 +258,6 @@ function do_connection_environment ()
 }
 
 
-check_3d_party_setup
 
 
 function usage ()
@@ -267,6 +266,7 @@ function usage ()
     exit
 }
 
+check_3d_party_setup
 
 if [[ ${#} -eq 0 ]] ; then
     list_available_connections

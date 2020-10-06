@@ -23,6 +23,7 @@ set -o errtrace
 trap 'ERR_trap ${LINENO} ${?}' ERR
 
 
+# Kill background process that is created in "connection_setup":
 local_ssh_pid=''
 function EXIT_trap ()
 {
@@ -72,34 +73,65 @@ source ${HOME}/${_3dpssh_dir}/.config
 # Should test for ping
 
 
-REMOTE_HOME="$(ssh ${_3dpssh_host} echo \${HOME})"
+#REMOTE_HOME="$(ssh ${_3dpssh_host} echo \${HOME})"
 
+
+
+eval "
+function check_3d_party_setup_helper ()
+{
+    local i
+
+    # Create working directory (_3dpssh_dir) if necessary
+    if [[ ! -d \${HOME}/${_3dpssh_dir} ]] ; then
+    	mkdir -p \${HOME}/${_3dpssh_dir}
+    fi
+
+    # Prune dead connections
+    for i in \${HOME}/${_3dpssh_dir}/* ; do	    
+    	if ! grep -q \${i} /proc/net/unix ; then
+    	    rm -f \${i}
+    	fi
+    done
+
+    # Return a list of live connections
+    echo \${HOME} \${HOME}/${_3dpssh_dir}/*
+}    
+"
+#declare -f check_3d_party_setup_helper
+
+# get_remote_home_and_connection_list sets the following two variables:
+CONNECTION_LIST=''
+REMOTE_HOME=''
+function get_remote_home_and_connection_list ()
+{
+    local list i first
+
+    list=$( \
+	    ssh ${_3dpssh_host} \
+		"$(declare -f check_3d_party_setup_helper) ; check_3d_party_setup_helper" \
+	)
+
+    CONNECTION_LIST=''
+    first=true
+    for i in ${list} ; do
+	if ${first} ; then
+	    REMOTE_HOME=${i}
+	    first=false
+	else
+	    CONNECTION_LIST="${CONNECTION_LIST} ${i}"
+	fi
+    done
+}
 
 function check_3d_party_setup ()
 {
-    # Create working directory (_3dpssh_dir) if necessary
-    if ! ssh ${_3dpssh_host} [[ -d ${REMOTE_HOME}/${_3dpssh_dir} ]] ; then
-    	echo "Creating: ssh ${_3dpssh_host} mkdir -p \${REMOTE_HOME}/${_3dpssh_dir}"
-    	ssh ${_3dpssh_host} mkdir -p ${REMOTE_HOME}/${_3dpssh_dir}
-    fi
+    local i found
 
-    # Check to see what connections are dead
-    # Live connections appear in /proc/net/unix
-    ssh ${_3dpssh_host} \
-	for i in ${REMOTE_HOME}/${_3dpssh_dir}/\* \; do \
-	    if ! grep -q \${i} /proc/net/unix \; then \
-	        rm -f \${i} \; \
-	    fi \
-	done
-}
-
-
-function check_remote_connection ()
-{
-    local found i
+    get_remote_home_and_connection_list
     
     found=false
-    for i in $(ssh ${_3dpssh_host} echo ${REMOTE_HOME}/${_3dpssh_dir}/\*) ; do
+    for i in ${CONNECTION_LIST} ; do
 	if [[ "$(basename "${i}")" == "${_3dpssh_local_name}" ]] ; then
 	    found=true
 	fi
@@ -107,8 +139,24 @@ function check_remote_connection ()
     
     if ! ${found} ; then
 	echo "Backend connection not found, starting it..."
+
 	pkill -f "ssh -fAXN -R " || :
 	ssh -fAXN -R ${REMOTE_HOME}/${_3dpssh_dir}/${_3dpssh_local_name}:127.0.0.1:22 ${_3dpssh_host}
+
+	get_remote_home_and_connection_list
+    
+	found=false
+	for i in ${CONNECTION_LIST} ; do
+	    if [[ "$(basename "${i}")" == "${_3dpssh_local_name}" ]] ; then
+		found=true
+	    fi
+	done
+
+	# if not found after start, somethings broken
+	if ! ${found} ; then
+	    echo "Starting backend connection failed.  Sum Ting Wong"
+	    exit 1
+	fi
     fi
 }
 
@@ -118,7 +166,7 @@ function list_available_connections ()
     local i
     
     echo -e "Available Connections:"
-    for i in $(ssh ${_3dpssh_host} echo ${REMOTE_HOME}/${_3dpssh_dir}/*) ; do
+    for i in ${CONNECTION_LIST} ; do
 	echo -e "\t$(basename ${i})"
     done
 }
@@ -210,11 +258,7 @@ function do_connection_environment ()
 }
 
 
-echo 1
 check_3d_party_setup
-echo 2
-check_remote_connection
-echo 3
 
 
 function usage ()

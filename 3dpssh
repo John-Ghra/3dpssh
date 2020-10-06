@@ -24,11 +24,11 @@ trap 'ERR_trap ${LINENO} ${?}' ERR
 
 
 # Kill background process that is created in "connection_setup":
-local_ssh_pid=''
+LOCAL_SSH_PID=''
 function EXIT_trap ()
 {
-    if [[ ! -z "${local_ssh_pid}" ]] ; then
-	kill ${local_ssh_pid}
+    if [[ ! -z "${LOCAL_SSH_PID}" ]] ; then
+	kill ${LOCAL_SSH_PID}
     fi
 }
 trap 'EXIT_trap' EXIT
@@ -43,7 +43,7 @@ _3dpssh_dir=.3dps
 # Note that if this port is in use, we search for an unused one one.
 # Because this port is on 127.0.0.1 only, this is not likely to
 # interfear with anything.
-local_port=22222
+LOCAL_PORT=22222
 
 
 # Check to see if we have done a setup on the local machine:
@@ -70,15 +70,12 @@ fi
 source ${HOME}/${_3dpssh_dir}/.config
 
 
-# Should test for ping
+# Should test for ping?
 
 
-#REMOTE_HOME="$(ssh ${_3dpssh_host} echo \${HOME})"
-
-
-
+# this function is evaluated on the 3d party host
 eval "
-function check_3d_party_setup_helper ()
+function get_remote_home_and_connection_list_helper ()
 {
     local i
 
@@ -94,50 +91,52 @@ function check_3d_party_setup_helper ()
     	fi
     done
 
-    # Return a list of live connections
-    echo \${HOME} \${HOME}/${_3dpssh_dir}/*
+    # Returns two things:
+    #    the remote home directory, and
+    #    a list of live connections.
+    echo \${HOME}
+    echo \${HOME}/${_3dpssh_dir}/*
 }    
 "
 #declare -f check_3d_party_setup_helper
 
-# get_remote_home_and_connection_list sets the following two variables:
-CONNECTION_LIST=''
-REMOTE_HOME=''
+# get_remote_home_and_connection_list sets the following two global variables:
+#    REMOTE_HOME
+#    CONNECTION_LIST
 function get_remote_home_and_connection_list ()
 {
-    local list i first
-
+    local list
+    
     list=$( \
 	    ssh ${_3dpssh_host} \
-		"$(declare -f check_3d_party_setup_helper) ; check_3d_party_setup_helper" \
+		"$(declare -f get_remote_home_and_connection_list_helper) ; get_remote_home_and_connection_list_helper" \
 	)
 
-    CONNECTION_LIST=''
-    first=true
-    for i in ${list} ; do
-	if ${first} ; then
-	    REMOTE_HOME=${i}
-	    first=false
-	else
-	    CONNECTION_LIST="${CONNECTION_LIST} ${i}"
-	fi
-    done
+    REMOTE_HOME="$(echo "${list}" | head -n 1)"
+    CONNECTION_LIST="$(echo "${list}" | tail -n 1)"
 }
 
-function check_3d_party_setup ()
+
+function check_if_connection_is_available ()
 {
     local i found
 
-    get_remote_home_and_connection_list
-    
-    found=false
+    found=1
     for i in ${CONNECTION_LIST} ; do
-	if [[ "$(basename "${i}")" == "${_3dpssh_local_name}" ]] ; then
-	    found=true
+	if [[ "$(basename "${i}")" == "${1}" ]] ; then
+	    found=0
 	fi
     done
+
+    return ${found}
+}
+
+
+function check_3d_party_setup ()
+{
+    get_remote_home_and_connection_list
     
-    if ! ${found} ; then
+    if ! check_if_connection_is_available ${_3dpssh_local_name} ; then
 	echo "Backend connection not found, starting it..."
 
 	pkill -f "ssh -fAXN -R " || :
@@ -145,15 +144,8 @@ function check_3d_party_setup ()
 
 	get_remote_home_and_connection_list
     
-	found=false
-	for i in ${CONNECTION_LIST} ; do
-	    if [[ "$(basename "${i}")" == "${_3dpssh_local_name}" ]] ; then
-		found=true
-	    fi
-	done
-
-	# if not found after start, somethings broken
-	if ! ${found} ; then
+	# if not found after re-start, somethings broken
+	if ! check_if_connection_is_available ${_3dpssh_local_name} ; then
 	    echo "Starting backend connection failed.  Sum Ting Wong"
 	    exit 1
 	fi
@@ -161,37 +153,29 @@ function check_3d_party_setup ()
 }
 
 
-function list_available_connections ()
-{
-    local i
-    
-    echo -e "Available Connections:"
-    for i in ${CONNECTION_LIST} ; do
-	echo -e "\t$(basename ${i})"
-    done
-}
-
-
 function connection_setup ()
 {
+    local i
+
     # "nc -z" can be used to test if a port is busy
 
     # Search for an available port:
-    while nc -z 127.0.0.1 ${local_port} ; do
-	local_port=$((local_port + 1))
+    while nc -z 127.0.0.1 ${LOCAL_PORT} ; do
+	LOCAL_PORT=$((LOCAL_PORT + 1))
     done
 
-    # --> race condition here on local_port <-- 
+    # --> race condition here on LOCAL_PORT <-- 
 
-    ssh -AXN -L 127.0.0.1:${local_port}:${REMOTE_HOME}/${_3dpssh_dir}/${1} ${_3dpssh_host} &
-    # --> race condition here on local_ssh_pid <--
-    local_ssh_pid=${!}
+    # Setup forward link
+    ssh -AXN -L 127.0.0.1:${LOCAL_PORT}:${REMOTE_HOME}/${_3dpssh_dir}/${1} ${_3dpssh_host} &
+    # --> race condition here on LOCAL_SSH_PID <--
+    LOCAL_SSH_PID=${!}
 
     # Wait for the above connection to complete.  A "spinner".
     # --> potential infinite loop <--
     i=0
     echo -n "Connecting "
-    while ! nc -z 127.0.0.1 ${local_port} ; do
+    while ! nc -z 127.0.0.1 ${LOCAL_PORT} ; do
 	case ${i} in
 	    ( 0 ) echo -ne '-\b' 
 	    ;;
@@ -219,44 +203,66 @@ function connection_setup ()
 }    
 
 
+function list_available_connections ()
+{
+    local i
+    
+    echo -e "Available Connections:"
+    for i in ${CONNECTION_LIST} ; do
+	echo -e "\t$(basename ${i})"
+    done
+}
+
+
 function do_ssh ()
 {
-    connection_setup ${1}
+    if check_if_connection_is_available ${1} ; then
+
+	connection_setup ${1}
     
-    ssh \
-	-o GlobalKnownHostsFile=/dev/null \
-	-o UserKnownHostsFile=/dev/null \
-	-o StrictHostKeyChecking=no \
-	-p ${local_port} \
-	127.0.0.1
+	ssh \
+	    -o GlobalKnownHostsFile=/dev/null \
+	    -o UserKnownHostsFile=/dev/null \
+	    -o StrictHostKeyChecking=no \
+	    -p ${LOCAL_PORT} \
+	    127.0.0.1
+    else
+	echo "Connection \"${1}\" not found."
+	list_available_connections
+    fi
 }
 
 
 function do_connection_environment ()
 {
-    connection_setup ${1}
+    if check_if_connection_is_available ${1} ; then
 
-    echo "For ssh/scp/rsync/sshfs, use \"localhost\" for ${1}."
-    echo "You are now in a sub-shell ... ^D to exit"
-
-    export -n SHELLOPTS
-    bash --rcfile <(echo \
-			". ~/.bashrc;" \
-			"PS1=\"[localhost-->${1}] \${PS1}\";" \
-			"alias rsync=\"rsync -e 'ssh -p ${local_port}'\";" \
-			"alias ssh=\"ssh" \
+	connection_setup ${1}
+	
+	echo "For ssh/scp/rsync/sshfs, use \"localhost\" for ${1}."
+	echo "You are now in a sub-shell ... ^D to exit"
+	
+	export -n SHELLOPTS
+	bash --rcfile <(echo \
+			    ". ~/.bashrc;" \
+			    "PS1=\"[localhost-->${1}] \${PS1}\";" \
+			    "alias rsync=\"rsync -e 'ssh -p ${LOCAL_PORT}'\";" \
+			    "alias ssh=\"ssh" \
 			    "-o GlobalKnownHostsFile=/dev/null" \
 			    "-o UserKnownHostsFile=/dev/null" \
 			    "-o StrictHostKeyChecking=no" \
-			    "-p ${local_port}\";" \
-			"alias sshfs=\"sshfs -p ${local_port}\";" \
-			"alias scp=\"scp -P ${local_port}\"" \
-			) || :
-    export SHELLOPTS
+			    "-p ${LOCAL_PORT}\";" \
+			    "alias sshfs=\"sshfs -p ${LOCAL_PORT}\";" \
+			    "alias scp=\"scp -P ${LOCAL_PORT}\"" \
+		       ) || :
+	export SHELLOPTS
 
-    echo "Dropped connection to \"${1}\""
+	echo "Dropped connection to \"${1}\""
+    else
+	echo "Connection \"${1}\" not found."
+	list_available_connections
+    fi
 }
-
 
 
 
@@ -265,6 +271,7 @@ function usage ()
     echo "Usage: ${0} -- to be explained"
     exit
 }
+
 
 check_3d_party_setup
 

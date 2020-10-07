@@ -218,72 +218,108 @@ function list_available_connections ()
 
 function do_ssh ()
 {
-    if check_if_connection_is_available ${1} ; then
-
-	connection_setup ${1}
+    connection_setup ${1}
     
-	ssh \
-	    -o GlobalKnownHostsFile=/dev/null \
-	    -o UserKnownHostsFile=/dev/null \
-	    -o StrictHostKeyChecking=no \
-	    -p ${LOCAL_PORT} \
-	    127.0.0.1
-    else
-	echo "Connection \"${1}\" not found."
-	list_available_connections
-    fi
+    ssh \
+	-o GlobalKnownHostsFile=/dev/null \
+	-o UserKnownHostsFile=/dev/null \
+	-o StrictHostKeyChecking=no \
+	-p ${LOCAL_PORT} \
+	127.0.0.1
 }
 
 
 function do_connection_environment ()
 {
-    if check_if_connection_is_available ${1} ; then
+    connection_setup ${1}
+    
+    echo "For ssh/scp/rsync/sshfs, use \"localhost\" for ${1}."
+    echo "You are now in a sub-shell ... ^D to exit"
+    
+    export -n SHELLOPTS
+    bash --rcfile <(echo \
+			". ~/.bashrc;" \
+			"PS1=\"[localhost-->${1}] \${PS1}\";" \
+			"alias rsync=\"rsync -e 'ssh -p ${LOCAL_PORT}'\";" \
+			"alias ssh=\"ssh" \
+			"-o GlobalKnownHostsFile=/dev/null" \
+			"-o UserKnownHostsFile=/dev/null" \
+			"-o StrictHostKeyChecking=no" \
+			"-p ${LOCAL_PORT}\";" \
+			"alias sshfs=\"sshfs -p ${LOCAL_PORT}\";" \
+			"alias scp=\"scp -P ${LOCAL_PORT}\"" \
+		   ) || :
+    export SHELLOPTS
+    
+    echo "Dropped connection to \"${1}\""
+}
 
-	connection_setup ${1}
-	
-	echo "For ssh/scp/rsync/sshfs, use \"localhost\" for ${1}."
-	echo "You are now in a sub-shell ... ^D to exit"
-	
-	export -n SHELLOPTS
-	bash --rcfile <(echo \
-			    ". ~/.bashrc;" \
-			    "PS1=\"[localhost-->${1}] \${PS1}\";" \
-			    "alias rsync=\"rsync -e 'ssh -p ${LOCAL_PORT}'\";" \
-			    "alias ssh=\"ssh" \
-			    "-o GlobalKnownHostsFile=/dev/null" \
-			    "-o UserKnownHostsFile=/dev/null" \
-			    "-o StrictHostKeyChecking=no" \
-			    "-p ${LOCAL_PORT}\";" \
-			    "alias sshfs=\"sshfs -p ${LOCAL_PORT}\";" \
-			    "alias scp=\"scp -P ${LOCAL_PORT}\"" \
-		       ) || :
-	export SHELLOPTS
 
-	echo "Dropped connection to \"${1}\""
-    else
-	echo "Connection \"${1}\" not found."
-	list_available_connections
-    fi
+function do_drop_connection ()
+{
+    pkill -f "ssh -fAXN -R " || :
 }
 
 
 
 function usage ()
 {
-    echo "Usage: ${0} -- to be explained"
-    exit
+    echo "Usage: ${0} -- 3d Party ssh"
+    echo "Synopsys:"
+    echo "    ${0}                 -- list available connections"
+    echo "    ${0} <connection>    -- ssh to \"connection\""
+    echo "    ${0} -e <connection> -- drop into an environment for \"connection\""
+    echo "    ${0} -x              -- drop backend connection"
 }
 
 
-check_3d_party_setup
-
+# No parameters on command line, list connections
 if [[ ${#} -eq 0 ]] ; then
+    check_3d_party_setup
     list_available_connections
+
+# One parameter, could be command (starts with '-'), could be connection name (no '-')
 elif [[ ${#} -eq 1 ]] ; then
-    do_ssh ${1}
+
+    # does this start with '-'?
+    if [[ "${1:0:1}" == "-" ]] ; then
+
+	if [[ (${1} == "-h") || (${1} == "--help") ]] ; then
+	    usage
+	elif [[ (${1} == "-x") || (${1} == "--exit") ]] ; then
+	    do_drop_connection
+	else
+	    usage
+	fi
+
+    # does not start with '-'
+    else
+
+	check_3d_party_setup
+
+	if check_if_connection_is_available ${1} ; then
+	    do_ssh ${1}
+	else
+	    echo "Connection \"${1}\" not found."
+	    list_available_connections
+	fi
+	
+    fi
+
+# Two parameters.  
 elif [[ ${#} -eq 2 ]] ; then
-    if [[ (${1} == "-c") || (${1} == "--connect") ]] ; then
-	do_connection_environment ${2}
+    # Only option is "-e <connection>"
+    if [[ (${1} == "-e") || (${1} == "--env") ]] ; then
+
+	check_3d_party_setup
+
+	if check_if_connection_is_available ${2} ; then
+	    do_connection_environment ${2}
+	else
+	    echo "Connection \"${2}\" not found."
+	    list_available_connections
+	fi
+	
     else
 	usage
     fi

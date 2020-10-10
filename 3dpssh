@@ -225,7 +225,8 @@ function do_ssh ()
 	-o UserKnownHostsFile=/dev/null \
 	-o StrictHostKeyChecking=no \
 	-p ${LOCAL_PORT} \
-	127.0.0.1
+	127.0.0.1 \
+	|| :
 }
 
 

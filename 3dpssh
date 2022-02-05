@@ -170,7 +170,7 @@ function connection_setup ()
 
     # Setup forward link
     echo 1
-    ssh -AXN -L 127.0.0.1:${LOCAL_PORT}:${REMOTE_HOME}/${_3dpssh_dir}/${1} ${_3dpssh_host} &
+    nohup ssh -AXN -L 127.0.0.1:${LOCAL_PORT}:${REMOTE_HOME}/${_3dpssh_dir}/${1} ${_3dpssh_host} &
     echo 2
     # --> race condition here on LOCAL_SSH_PID <--
     LOCAL_SSH_PID=${!}

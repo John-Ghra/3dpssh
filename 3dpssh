@@ -142,7 +142,11 @@ function check_3d_party_setup ()
         echo "Backend connection not found, starting it..."
 
         pkill -f "ssh -fAXN -R " || :
-        ssh -fAXN -R ${REMOTE_HOME}/${_3dpssh_dir}/${_3dpssh_local_name}:127.0.0.1:22 ${_3dpssh_host}
+        ssh -fAXN -R ${REMOTE_HOME}/${_3dpssh_dir}/${_3dpssh_local_name}:127.0.0.1:22 ${_3dpssh_host} \
+        < /dev/null \
+        > /dev/null \
+        2> /dev/null
+
 
         get_remote_home_and_connection_list
 
